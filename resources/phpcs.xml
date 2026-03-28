@@ -1,0 +1,25 @@
+<?xml version="1.0"?>
+<ruleset name="PSR-12 Extended Documentation Rules">
+    <description>PSR-12 standard with additional documentation requirements</description>
+
+    <exclude-pattern>*/tests/*</exclude-pattern>
+    <!-- Show progress and sniff codes -->
+    <arg value="ps"/>
+    <arg name="colors"/>
+
+    <!-- Scan only PHP files -->
+    <arg name="extensions" value="php"/>
+
+    <rule ref="PSR12">
+        <exclude name="PSR1.Classes.ClassDeclaration.MissingNamespace"/>
+        <exclude name="Squiz.Classes.ValidClassName.NotCamelCaps"/>
+    </rule>
+
+    <!-- Function documentation requirements -->
+    <rule ref="Squiz.Commenting.FunctionComment.ScalarTypeHintMissing"/>
+    <rule ref="Squiz.Commenting.FunctionComment.TypeHintMissing"/>
+    <rule ref="Squiz.Commenting.FunctionComment.MissingThrows"/>
+
+    <!-- Doc comment alignment -->
+    <rule ref="Squiz.Commenting.DocCommentAlignment"/>
+</ruleset>

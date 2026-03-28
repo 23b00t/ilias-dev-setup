@@ -19,10 +19,21 @@ else
 	IL_DIR="$BASE_DIR/il_${ILIAS_VERSION}"
 fi
 
+# Check if directory already exists and ask user to confirm before proceeding
+if [ -d "$IL_DIR" ]; then
+  echo "Directory $IL_DIR already exists. Do you want to proceed and potentially overwrite it? (y/N)"
+  read -r answer
+  if [[ ! "$answer" =~ ^[Yy]$ ]]; then
+    echo "Aborting."
+    exit 1
+  fi
+fi
+
 ILIASDATA_DIR="$IL_DIR/iliasdata"
 PROJECT_DIR="$IL_DIR"
 REPO_DIR="$IL_DIR/ilias_${ILIAS_VERSION}"
 DOCKER_COMPOSE_FILE="$IL_DIR/docker-compose.yml"
+HOST_IP="$(hostname -I | awk '{print $1}')"
 
 # Map major version to srsolutions/ilias-dev tag
 get_image_tag() {
@@ -120,9 +131,8 @@ services:
       - ILIAS_DB_PORT=3306
       - ILIAS_DATA_PATH=/var/iliasdata
       - ILIAS_DEVMODE=1
-      - ILIAS_HTTP_PATH=http://10.0.0.15
+      - ILIAS_HTTP_PATH=http://${HOST_IP}
       - ILIAS_ROOT_PASSWORD=trash
-      # First time
       - ILIAS_AUTO_SETUP=1
       - ILIAS_DUMP_AUTOLOAD=1
       - ILIAS_CLIENT_NAME=default
@@ -203,8 +213,6 @@ fi
 echo "Patching xdebug config and installing vim inside running ILIAS container ..."
 
 # Write custom xdebug.ini with client_host set to host IP inside the running container
-HOST_IP="$(hostname -I | awk '{print $1}')"
-
 echo "Writing custom xdebug.ini (client_host=${HOST_IP}) inside running ILIAS container ..."
 
 sudo docker exec "$ILIASCID" bash -lc "cat >/usr/local/etc/php/conf.d/xdebug.ini" <<EOF
