@@ -21,12 +21,12 @@ fi
 
 # Check if directory already exists and ask user to confirm before proceeding
 if [ -d "$IL_DIR" ]; then
-  echo "Directory $IL_DIR already exists. Do you want to proceed and potentially overwrite changes? (y/N)"
-  read -r answer
-  if [[ ! "$answer" =~ ^[Yy]$ ]]; then
-    echo "Aborting."
-    exit 1
-  fi
+	echo "Directory $IL_DIR already exists. Do you want to proceed and potentially overwrite changes? (y/N)"
+	read -r answer
+	if [[ ! "$answer" =~ ^[Yy]$ ]]; then
+		echo "Aborting."
+		exit 1
+	fi
 fi
 
 ILIASDATA_DIR="$IL_DIR/iliasdata"
@@ -49,7 +49,24 @@ get_php_version() {
 	esac
 }
 
+# Map major version to a Node.js version compatible with that ILIAS branch
+get_node_version() {
+	local ver="$1"
+	case "$ver" in
+	10) echo "20.10.0" ;;
+	11) echo "20.10.0" ;;
+	12) echo "22.18.0" ;;
+	*)
+		echo "Unsupported ILIAS version '$ver'" >&2
+		exit 1
+		;;
+	esac
+}
+
+
 PHP_VERSION="$(get_php_version "$ILIAS_VERSION")"
+NODE_VERSION="$(get_node_version "$ILIAS_VERSION")"
+
 
 mkdir -p "$BASE_DIR"
 [ -f "$INSTANCES_FILE" ] || touch "$INSTANCES_FILE"
@@ -85,12 +102,30 @@ sudo chown -R 33:33 "$ILIASDATA_DIR"
 
 # Prepare project directory
 mkdir -p "$PROJECT_DIR"
+
+# Copy the local Dockerfile (from the directory where this script is located) into PROJECT_DIR
+if [ -f "./Dockerfile" ]; then
+	cp -f "./Dockerfile" "$PROJECT_DIR/Dockerfile"
+else
+	echo "Error: Dockerfile not found in current directory: $(pwd)/Dockerfile" >&2
+	exit 1
+fi
+
+# Copy the local docker-ilias-entrypoint (from the directory where this script is located) into PROJECT_DIR 
+if [ -f "./docker-ilias-entrypoint" ]; then
+	cp -f "./docker-ilias-entrypoint" "$PROJECT_DIR/docker-ilias-entrypoint"
+else
+	echo "Error: docker-ilias-entrypoint not found in current directory: $(pwd)/docker-ilias-entrypoint" >&2
+	exit 1
+fi
+
 cd "$PROJECT_DIR"
 
 # Clone repo if needed
 if [ ! -d "$REPO_DIR/.git" ]; then
 	echo "Cloning ILIAS repository into $REPO_DIR ..."
 	git clone git@github.com:23b00t/ILIAS.git "$REPO_DIR"
+  git fetch origin
 else
 	echo "Repository $REPO_DIR already exists, skipping clone."
 fi
@@ -102,7 +137,12 @@ mkdir -p "$REPO_DIR/public/Customizing/global/plugins"
 if git checkout "release_${ILIAS_VERSION}" >/dev/null 2>&1; then
 	echo "Checked out branch/tag release_${ILIAS_VERSION}."
 else
-	echo "Note: Branch/Tag release_${ILIAS_VERSION} not found, staying on default branch."
+  if git checkout trunk >/dev/null 2>&1; then
+    echo "Branch/tag release_${ILIAS_VERSION} not found, checked out trunk instead."
+  else
+    echo "Error: Could not checkout release_${ILIAS_VERSION} or trunk. Please check your repository." >&2
+    exit 1
+  fi
 fi
 
 cd "$PROJECT_DIR"
@@ -113,11 +153,19 @@ sudo rm -f ${REPO_DIR}/ilias.ini.php
 cat >"$DOCKER_COMPOSE_FILE" <<EOF
 services:
   ilias:
-    build: .
+    build:
+      context: .
+      dockerfile: ./Dockerfile
+
+      args:
+        PHP_VERSION: "${PHP_VERSION}"
+        HOST_IP: "${HOST_IP}"
+        NODE_VERSION: "${NODE_VERSION}"
     ports:
-      - ${APP_PORT}:80
+      - "${APP_PORT}:80"
     depends_on:
-      - mysql
+      mysql:
+        condition: service_started
     volumes:
       - ./ilias_${ILIAS_VERSION}:/var/www/html
       - ./iliasdata:/var/iliasdata
@@ -132,7 +180,7 @@ services:
       - ILIAS_DB_PORT=3306
       - ILIAS_DATA_PATH=/var/iliasdata
       - ILIAS_DEVMODE=1
-      - ILIAS_HTTP_PATH=http://${HOST_IP}
+      - ILIAS_HTTP_PATH=http://${HOST_IP}:${APP_PORT}
       - ILIAS_ROOT_PASSWORD=trash
       - ILIAS_AUTO_SETUP=1
       - ILIAS_DUMP_AUTOLOAD=1
@@ -172,21 +220,27 @@ sudo chmod -R 775 ${REPO_DIR}
 
 # Pre-populate node_modules (npm clean-install --ignore-scripts) and vendor via one-off container
 echo "Pre-populating node_modules and vendor via one-off container in ${REPO_DIR} ..."
-sudo docker run --rm \
-  -v "$REPO_DIR":/var/www/html \
-  -w /var/www/html \
-  "$IMAGE_NAME" \
-  bash -lc '
-    set -e
-    if [ -f package.json ]; then
-      echo "Running: npm clean-install --ignore-scripts ..."
-      npm clean-install --ignore-scripts
-    else
-      echo "No package.json found, skipping npm clean-install."
-    fi
-    echo "Running: composer install --no-interaction --prefer-dist ..."
-    composer install --no-interaction --prefer-dist
-  ' || { echo "ERROR: pre-build (npm/composer) failed"; exit 1; }
+(
+	cd "$PROJECT_DIR"
+	sudo docker compose run --rm --no-deps \
+		--build \
+		-w /var/www/html \
+		ilias \
+		bash -lc '
+        set -e
+        if [ -f package.json ]; then
+          echo "Running: npm clean-install --ignore-scripts ..."
+          npm clean-install --ignore-scripts
+        else
+          echo "No package.json found, skipping npm clean-install."
+        fi
+        echo "Running: composer install --no-interaction --prefer-dist ..."
+        composer install --no-interaction --prefer-dist
+      '
+) || {
+	echo "ERROR: pre-build (npm/composer) failed"
+	exit 1
+}
 
 echo "Starting Docker Compose (detached, with AUTO_SETUP) in $PROJECT_DIR ..."
 cd "$PROJECT_DIR"

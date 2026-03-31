@@ -1,19 +1,18 @@
 #!/bin/bash
 set -e
 
-function dump_ini_files () {
-    # Only dump ini files after first setup
-    if [ -d "${ILIAS_DATA_PATH}/${ILIAS_CLIENT_NAME}" ]; then
-        echo "${ILIAS_INI}" > "${ILIAS_WWW_PATH}/ilias.ini.php"
-        chown www-data:www-data "${ILIAS_WWW_PATH}/ilias.ini.php"
+function dump_ini_files() {
+	# Only dump ini files after first setup
+	if [ -d "${ILIAS_DATA_PATH}/${ILIAS_CLIENT_NAME}" ]; then
+		echo "${ILIAS_INI}" >"${ILIAS_WWW_PATH}/ilias.ini.php"
+		chown www-data:www-data "${ILIAS_WWW_PATH}/ilias.ini.php"
 
-        echo "${ILIAS_CLIENT_INI}" > "${ILIAS_DATA_PATH}/${ILIAS_CLIENT_NAME}/client.ini.php"
-        chown www-data:www-data "${ILIAS_DATA_PATH}/${ILIAS_CLIENT_NAME}/client.ini.php"
-    fi
+		echo "${ILIAS_CLIENT_INI}" >"${ILIAS_DATA_PATH}/${ILIAS_CLIENT_NAME}/client.ini.php"
+		chown www-data:www-data "${ILIAS_DATA_PATH}/${ILIAS_CLIENT_NAME}/client.ini.php"
+	fi
 }
 
 # Set defaults
-ILIAS_DUMP_AUTOLOAD="${ILIAS_DUMP_AUTOLOAD:=0}"
 ILIAS_AUTO_SETUP="${ILIAS_AUTO_SETUP:=0}"
 ILIAS_AUTO_UPDATE="${ILIAS_AUTO_UPDATE:=$ILIAS_AUTO_SETUP}"
 ILIAS_DEVMODE="${ILIAS_DEVMODE:=0}"
@@ -33,8 +32,10 @@ ILIAS_ROOT_PASSWORD="${ILIAS_ROOT_PASSWORD:=$(pwgen -1 16)}"
 ILIAS_DB_TYPE="${ILIAS_DB_TYPE:=innodb}"
 ILIAS_DB_HOST="${ILIAS_DB_HOST:=mysql}"
 ILIAS_DB_USER="${ILIAS_DB_USER:=ilias}"
+ILIAS_DB_PASSWORD="${ILIAS_DB_PASSWORD:=trash}"
 ILIAS_DB_NAME="${ILIAS_DB_NAME:=ilias}"
 ILIAS_DB_PORT="${ILIAS_DB_PORT:=3306}"
+
 ILIAS_DB_DUMP="${ILIAS_DB_DUMP:=components/ILIAS/setup_/sql/ilias3.sql}"
 
 ILIAS_DEFAULT_SKIN="${ILIAS_DEFAULT_SKIN:=default}"
@@ -178,13 +179,10 @@ INSTALL_JSON="
 }
 "
 
-echo "${PHP_INI}" > ${PHP_INI_DIR}/conf.d/ilias.ini
-echo "${CRON}" > /etc/cron.d/ilias
+mkdir -p "${ILIAS_ERRORS_PATH}" "${ILIAS_ILIASDATA_PATH}"
 
-if [ "${ILIAS_DUMP_AUTOLOAD}" -eq 1 ]; then
-    echo "Running composer dump-autoload"
-    composer dump-autoload
-fi
+echo "${PHP_INI}" >${PHP_INI_DIR}/conf.d/ilias.ini
+echo "${CRON}" >/etc/cron.d/ilias
 
 # Add ini files
 dump_ini_files
@@ -194,13 +192,13 @@ touch ${ILIAS_ILIASDATA_PATH}/ilias.log
 chown www-data:www-data ${ILIAS_ILIASDATA_PATH}/ilias.log
 
 if [ "${ILIAS_AUTO_SETUP}" -eq "1" ]; then
-    if [ ! -f "${ILIAS_INSTALL_CONFIG_PATH}" ]; then
-        # Dump install config
-        echo "${INSTALL_JSON}" > "${ILIAS_INSTALL_CONFIG_PATH}"
-    fi
+	if [ ! -f "${ILIAS_INSTALL_CONFIG_PATH}" ]; then
+		# Dump install config
+		echo "${INSTALL_JSON}" >"${ILIAS_INSTALL_CONFIG_PATH}"
+	fi
 
-    if [[ "$1" == apache2* ]] || [ "$1" == php-fpm ]; then
-        mysql="mysql
+	if [[ "$1" == apache2* ]] || [ "$1" == php-fpm ]; then
+		mysql="mysql
             --host=${ILIAS_DB_HOST}
             --port=${ILIAS_DB_PORT}
             --user=${ILIAS_DB_USER}
@@ -208,65 +206,71 @@ if [ "${ILIAS_AUTO_SETUP}" -eq "1" ]; then
             --skip-ssl
             ${ILIAS_DB_NAME}"
 
-        # Wait for database
-        tries=0
-        maxTries=6
-        until ${mysql} -e "SELECT VERSION();" &> /dev/null; do
-            tries=$((tries + 1))
-            if [ $tries -gt $maxTries ]; then
-                # give up
-                echo "Could not connect to database, aborting"
-                exit 1
-            fi
-            echo "Cannot connect to database, waiting"
-            sleep 10
-        done
-        echo "Database connection established"
+		# Wait for database
+		tries=0
+		maxTries=6
+		until ${mysql} -e "SELECT VERSION();" &>/dev/null; do
+			tries=$((tries + 1))
+			if [ $tries -gt $maxTries ]; then
+				# give up
+				echo "Could not connect to database, aborting"
+				exit 1
+			fi
+			echo "Cannot connect to database, waiting"
+			sleep 10
+		done
+		echo "Database connection established"
 
-        if ! $(${mysql} -e "SELECT COUNT(*) FROM settings" &> /dev/null); then
-            # Run setup
-            echo "Running setup"
-            su www-data -s /bin/sh -c "php cli/setup.php install -y \
+		if ! ${mysql} -e "SELECT COUNT(*) FROM settings" &>/dev/null; then
+
+			# Run setup
+			echo "Running setup"
+			su www-data -s /bin/sh -c "php cli/setup.php install -y \
                 ${ILIAS_INSTALL_ARGUMENTS} ${ILIAS_INSTALL_CONFIG_PATH}"
 
-            # Customize ilias
-            echo "Setting root password"
-            ${mysql} -e "UPDATE usr_data SET
+			# Customize ilias
+			echo "Setting root password"
+			${mysql} -e "UPDATE usr_data SET
                     passwd = '${ILIAS_ROOT_PASSWORD}',
                     passwd_enc_type = 'md5'
                 WHERE usr_id = 6"
 
-            echo "Setting skin/style"
-            ${mysql} -e "UPDATE usr_pref SET value = '${ILIAS_DEFAULT_SKIN}'
+			echo "Setting skin/style"
+			${mysql} -e "UPDATE usr_pref SET value = '${ILIAS_DEFAULT_SKIN}'
                 WHERE keyword = 'skin'"
-            ${mysql} -e "UPDATE usr_pref SET value = '${ILIAS_DEFAULT_STYLE}'
+			${mysql} -e "UPDATE usr_pref SET value = '${ILIAS_DEFAULT_STYLE}'
                 WHERE keyword = 'style'"
 
-            # Overwrite generated ini files
-            dump_ini_files
+			# Overwrite generated ini files
+			dump_ini_files
 
-            echo "======================================================="
-            echo "ILIAS installed successfully!"
-            echo "Log in using the following credentials:"
-            echo
-            echo "User:           root"
-            echo "Password:       ${ILIAS_ROOT_PASSWORD}"
-            echo "======================================================="
-        else
-            echo "ILIAS already installed"
+			echo "======================================================="
+			echo "ILIAS installed successfully!"
+			echo "Log in using the following credentials:"
+			echo
+			echo "User:           root"
+			echo "Password:       ${ILIAS_ROOT_PASSWORD}"
+			echo "======================================================="
+		else
+			echo "ILIAS already installed"
 
-            if [ "${ILIAS_AUTO_UPDATE}" -eq "1" ]; then
-                echo "Update requested, running setup"
-                su www-data -s /bin/sh -c "php cli/setup.php update -y ${ILIAS_UPDATE_ARGUMENTS}"
-            fi
-        fi
-    fi
+			if [ "${ILIAS_AUTO_UPDATE}" -eq "1" ]; then
+				echo "Update requested, running setup"
+				su www-data -s /bin/sh -c "php cli/setup.php update -y ${ILIAS_UPDATE_ARGUMENTS}"
+			fi
+		fi
+	fi
 else
-    echo "ILIAS setup skipped"
+	echo "ILIAS setup skipped"
 fi
 
-# start lucene server
-java -jar /var/www/html/components/ILIAS/WebServices/RPC/lib/ilServer.jar /var/www/html/components/ILIAS/WebServices/RPC/lib/ilServer.properties start &
-echo "lucene_started"
+# start lucene server only after a successful install (jar may not exist before setup)
+if [ -f "/var/www/html/components/ILIAS/WebServices/RPC/lib/ilServer.jar" ]; then
+	java -jar /var/www/html/components/ILIAS/WebServices/RPC/lib/ilServer.jar /var/www/html/components/ILIAS/WebServices/RPC/lib/ilServer.properties start &
+	echo "lucene_started"
+else
+	echo "lucene_skipped (ilServer.jar not found)"
+fi
 
 exec "$@"
+

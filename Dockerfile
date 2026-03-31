@@ -1,11 +1,12 @@
-ARG PHP_VERSION
+ARG PHP_VERSION=8.3
+ARG HOST_IP=127.0.0.1
+
+FROM php:${PHP_VERSION}-apache
+
 ARG TARGETARCH
-ARG NODE_VERSION=20.10.0
-ARG HOST_IP
-
-FROM php:${PHP_VERSION}
-
 ENV ILIAS_DEVMODE=1
+ARG NODE_VERSION
+
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
         cron \
@@ -74,6 +75,9 @@ RUN mkdir -p ${ILIAS_DATA_PATH} \
 VOLUME ${ILIAS_DATA_PATH}
 
 COPY docker-ilias-entrypoint /usr/local/bin/docker-ilias-entrypoint
+
+RUN chmod +x /usr/local/bin/docker-ilias-entrypoint
+
 
 RUN sed -i 's|DocumentRoot /var/www/html|DocumentRoot /var/www/html/public|g' /etc/apache2/sites-enabled/000-default.conf
 
