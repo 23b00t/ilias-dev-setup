@@ -21,7 +21,7 @@ fi
 
 # Check if directory already exists and ask user to confirm before proceeding
 if [ -d "$IL_DIR" ]; then
-  echo "Directory $IL_DIR already exists. Do you want to proceed and potentially overwrite it? (y/N)"
+  echo "Directory $IL_DIR already exists. Do you want to proceed and potentially overwrite changes? (y/N)"
   read -r answer
   if [[ ! "$answer" =~ ^[Yy]$ ]]; then
     echo "Aborting."
@@ -36,14 +36,12 @@ DOCKER_COMPOSE_FILE="$IL_DIR/docker-compose.yml"
 HOST_IP="$(hostname -I | awk '{print $1}')"
 
 # Map major version to srsolutions/ilias-dev tag
-get_image_tag() {
+get_php_version() {
 	local ver="$1"
 	case "$ver" in
-	8) echo "8-php8.0-apache" ;;
-	9) echo "9-php8.2-apache" ;;
-	10) echo "10-php8.3-apache" ;;
-	11) echo "11-beta-php8.4-apache" ;;
-	12) echo "11-beta-php8.4-apache" ;; # 12 uses 11-beta image
+	10) echo "8.3" ;;
+	11) echo "8.4" ;;
+	12) echo "8.4" ;;
 	*)
 		echo "Unsupported ILIAS version '$ver'" >&2
 		exit 1
@@ -51,8 +49,7 @@ get_image_tag() {
 	esac
 }
 
-IMAGE_TAG="$(get_image_tag "$ILIAS_VERSION")"
-IMAGE_NAME="srsolutions/ilias-dev:${IMAGE_TAG}"
+PHP_VERSION="$(get_php_version "$ILIAS_VERSION")"
 
 mkdir -p "$BASE_DIR"
 [ -f "$INSTANCES_FILE" ] || touch "$INSTANCES_FILE"
@@ -62,21 +59,25 @@ LAST_LINE="$(tail -n 1 "$INSTANCES_FILE" || true)"
 if [ -z "$LAST_LINE" ]; then
 	APP_PORT=8500
 	DB_PORT=3500
+	MAILPIT_PORT=4500
 else
 	LAST_APP_PORT="$(echo "$LAST_LINE" | awk -F':' '{print $2}')"
 	LAST_DB_PORT="$(echo "$LAST_LINE" | awk -F':' '{print $3}')"
-	if ! [[ "$LAST_APP_PORT" =~ ^[0-9]+$ ]] || ! [[ "$LAST_DB_PORT" =~ ^[0-9]+$ ]]; then
+	LAST_MAILPIT_PORT="$(echo "$LAST_LINE" | awk -F':' '{print $4}')"
+	if ! [[ "$LAST_APP_PORT" =~ ^[0-9]+$ ]] || ! [[ "$LAST_DB_PORT" =~ ^[0-9]+$ ]] || ! [[ "$LAST_MAILPIT_PORT" =~ ^[0-9]+$ ]]; then
 		echo "Warning: Could not parse last line of $INSTANCES_FILE: '$LAST_LINE'"
-		echo "Falling back to default ports 8500/3500."
+		echo "Falling back to default ports 8500/3500/4500."
 		APP_PORT=8500
 		DB_PORT=3500
+		MAILPIT_PORT=4500
 	else
 		APP_PORT=$((LAST_APP_PORT + 1))
 		DB_PORT=$((LAST_DB_PORT + 1))
+		MAILPIT_PORT=$((LAST_MAILPIT_PORT + 1))
 	fi
 fi
 
-echo "Using ports: HTTP ${APP_PORT}, DB ${DB_PORT}"
+echo "Using ports: HTTP ${APP_PORT}, DB ${DB_PORT}, Mailpit ${MAILPIT_PORT}"
 
 # Prepare data directory
 mkdir -p "$ILIASDATA_DIR/ilias"
@@ -112,7 +113,7 @@ sudo rm -f ${REPO_DIR}/ilias.ini.php
 cat >"$DOCKER_COMPOSE_FILE" <<EOF
 services:
   ilias:
-    image: ${IMAGE_NAME}
+    build: .
     ports:
       - ${APP_PORT}:80
     depends_on:
@@ -148,10 +149,23 @@ services:
       - MYSQL_DATABASE=ilias
       - MYSQL_USER=ilias
       - MYSQL_PASSWORD=trash
+
+  mailpit:
+    image: axllent/mailpit
+    volumes:
+      - ./mailer:/data
+    ports:
+      - "${MAILPIT_PORT}:8025"
+    environment:
+      MP_DATABASE: /data/mailpit.db
+      MP_SMTP_AUTH_ACCEPT_ANY: 1
+      MP_SMTP_AUTH_ALLOW_INSECURE: 1
+    networks:
+      - default
 EOF
 
 # Append human-readable instance info
-echo "${IL_DIR}:${APP_PORT}:${DB_PORT}" >>"$INSTANCES_FILE"
+echo "${IL_DIR}:${APP_PORT}:${DB_PORT}:${MAILPIT_PORT}" >>"$INSTANCES_FILE"
 
 sudo chown -R 33:www-data ${REPO_DIR}
 sudo chmod -R 775 ${REPO_DIR}
@@ -210,38 +224,20 @@ else
 	echo "ILIAS auto-setup completed."
 fi
 
-echo "Patching xdebug config and installing vim inside running ILIAS container ..."
-
-# Write custom xdebug.ini with client_host set to host IP inside the running container
-echo "Writing custom xdebug.ini (client_host=${HOST_IP}) inside running ILIAS container ..."
-
-sudo docker exec "$ILIASCID" bash -lc "cat >/usr/local/etc/php/conf.d/xdebug.ini" <<EOF
-zend_extension=/usr/local/lib/php/extensions/no-debug-non-zts-20230831/xdebug.so
-xdebug.mode = develop,debug,profile
-xdebug.discover_client_host = false
-xdebug.client_port = 9003
-xdebug.log = /var/log/xdebug.log
-xdebug.start_with_request = yes
-xdebug.output_dir = /var/iliasdata/ilias
-xdebug.client_host = ${HOST_IP}
-EOF
-
-# Install vim
-sudo docker exec "$ILIASCID" bash -lc \
-	'apt-get update && apt-get install -y --no-install-recommends vim && rm -rf /var/lib/apt/lists/*' ||
-	echo "Warning: Failed to install vim"
-
-# Restart Apache to apply xdebug changes
-sudo docker exec "$ILIASCID" apache2ctl -k restart || echo "Warning: Failed to restart Apache"
-
-echo "Commenting out AUTO_SETUP and DUMP_AUTOLOAD in docker-compose.yml ..."
-
-# Comment out AUTO_SETUP and DUMP_AUTOLOAD lines for subsequent runs
-sed -i \
-	-e 's/^\(\s*-\s*ILIAS_AUTO_SETUP=1\)/# \1/' \
-	-e 's/^\(\s*-\s*ILIAS_DUMP_AUTOLOAD=1\)/# \1/' \
-	"$DOCKER_COMPOSE_FILE"
-
-echo "Done."
 echo "ILIAS should now be available at http://${HOST_IP}:${APP_PORT}"
-echo "Containers will keep running. Subsequent 'docker compose up' calls will not re-run AUTO_SETUP."
+
+echo "Copying phpcs and phpstan configs to $IL_DIR ..."
+cp ./resources/phpcs.xml "$IL_DIR/phpcs.xml"
+cp ./resources/phpstan.neon "$IL_DIR/phpstan.neon"
+cp ./resources/constants.php "$IL_DIR/constants.php"
+echo "done."
+
+echo "Setup direnv for $IL_DIR ..."
+cat >"$IL_DIR/.envrc" <<EOF
+# Set PHP version
+PATH_add /home/user/bin/php${PHP_VERSION}
+
+# Set DBUI URL
+export DBUI_URL="mariadb://${DB_USER}:${DB_PASSWD}@127.0.0.1:${DP_PORT}/${DB_NAME}"
+EOF
+echo "done."
