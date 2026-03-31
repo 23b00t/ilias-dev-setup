@@ -306,6 +306,6 @@ cat >"$IL_DIR/.envrc" <<EOF
 PATH_add /home/user/bin/php${PHP_VERSION}
 
 # Set DBUI URL
-export DBUI_URL="mariadb://${DB_USER}:${DB_PASSWD}@127.0.0.1:${DP_PORT}/${DB_NAME}"
+export DBUI_URL="mariadb://${DB_USER}:${DB_PASSWD}@127.0.0.1:${DB_PORT}/${DB_NAME}"
 EOF
 echo "done."
