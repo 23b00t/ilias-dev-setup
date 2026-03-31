@@ -303,7 +303,7 @@ echo "done."
 echo "Setup direnv for $IL_DIR ..."
 cat >"$IL_DIR/.envrc" <<EOF
 # Set PHP version
-PATH_add /home/user/bin/php${PHP_VERSION}
+PATH_add /home/user/bin/php${PHP_VERSION//./}
 
 # Set DBUI URL
 export DBUI_URL="mariadb://${DB_USER}:${DB_PASSWD}@127.0.0.1:${DB_PORT}/${DB_NAME}"
