@@ -10,6 +10,7 @@ fi
 
 ILIAS_VERSION="$1"
 
+SCRIPT_ROOT="$(pwd)"
 BASE_DIR="$HOME/code"
 INSTANCES_FILE="$BASE_DIR/ilias-instances"
 # If $2 is provided, use it as directory name suffix, otherwise default to version-based naming
@@ -34,6 +35,9 @@ PROJECT_DIR="$IL_DIR"
 REPO_DIR="$IL_DIR/ilias_${ILIAS_VERSION}"
 DOCKER_COMPOSE_FILE="$IL_DIR/docker-compose.yml"
 HOST_IP="$(hostname -I | awk '{print $1}')"
+DB_USER="ilias"
+DB_PASSWD="trash"
+DB_NAME="ilias"
 
 # Map major version to srsolutions/ilias-dev tag
 get_php_version() {
@@ -104,18 +108,18 @@ sudo chown -R 33:33 "$ILIASDATA_DIR"
 mkdir -p "$PROJECT_DIR"
 
 # Copy the local Dockerfile (from the directory where this script is located) into PROJECT_DIR
-if [ -f "./Dockerfile" ]; then
-	cp -f "./Dockerfile" "$PROJECT_DIR/Dockerfile"
+if [ -f "$SCRIPT_ROOT/resources/Dockerfile" ]; then
+	cp -f "$SCRIPT_ROOT/resources/Dockerfile" "$PROJECT_DIR/Dockerfile"
 else
-	echo "Error: Dockerfile not found in current directory: $(pwd)/Dockerfile" >&2
+	echo "Error: Dockerfile not found in SCRIPT_ROOT: $SCRIPT_ROOT/resources/Dockerfile" >&2
 	exit 1
 fi
 
-# Copy the local docker-ilias-entrypoint (from the directory where this script is located) into PROJECT_DIR 
-if [ -f "./docker-ilias-entrypoint" ]; then
-	cp -f "./docker-ilias-entrypoint" "$PROJECT_DIR/docker-ilias-entrypoint"
+# Copy the local docker-ilias-entrypoint from SCRIPT_ROOT into PROJECT_DIR 
+if [ -f "$SCRIPT_ROOT/resources/docker-ilias-entrypoint" ]; then
+	cp -f "$SCRIPT_ROOT/resources/docker-ilias-entrypoint" "$PROJECT_DIR/docker-ilias-entrypoint"
 else
-	echo "Error: docker-ilias-entrypoint not found in current directory: $(pwd)/docker-ilias-entrypoint" >&2
+	echo "Error: docker-ilias-entrypoint not found in SCRIPT_ROOT: $SCRIPT_ROOT/resources/docker-ilias-entrypoint" >&2
 	exit 1
 fi
 
@@ -125,12 +129,12 @@ cd "$PROJECT_DIR"
 if [ ! -d "$REPO_DIR/.git" ]; then
 	echo "Cloning ILIAS repository into $REPO_DIR ..."
 	git clone git@github.com:23b00t/ILIAS.git "$REPO_DIR"
-  git fetch origin
 else
 	echo "Repository $REPO_DIR already exists, skipping clone."
 fi
 
 cd "$REPO_DIR"
+git fetch origin
 mkdir -p "$REPO_DIR/public/Customizing/global/plugins"
 
 # Try to checkout release_<version>, fall back to default branch if not found
@@ -174,16 +178,15 @@ services:
       - 1.1.1.1
     environment:
       - ILIAS_DB_HOST=mysql
-      - ILIAS_DB_USER=ilias
-      - ILIAS_DB_PASSWORD=trash
-      - ILIAS_DB_NAME=ilias
+      - ILIAS_DB_USER=${DB_USER}
+      - ILIAS_DB_PASSWORD=${DB_PASSWD}
+      - ILIAS_DB_NAME=${DB_NAME}
       - ILIAS_DB_PORT=3306
       - ILIAS_DATA_PATH=/var/iliasdata
       - ILIAS_DEVMODE=1
       - ILIAS_HTTP_PATH=http://${HOST_IP}:${APP_PORT}
       - ILIAS_ROOT_PASSWORD=trash
       - ILIAS_AUTO_SETUP=1
-      - ILIAS_DUMP_AUTOLOAD=1
       - ILIAS_CLIENT_NAME=default
   mysql:
     image: mariadb
@@ -194,9 +197,9 @@ services:
       - --collation-server=utf8_general_ci
     environment:
       - MYSQL_ROOT_PASSWORD=trash
-      - MYSQL_DATABASE=ilias
-      - MYSQL_USER=ilias
-      - MYSQL_PASSWORD=trash
+      - MYSQL_DATABASE=${DB_NAME}
+      - MYSQL_USER=${DB_USER}
+      - MYSQL_PASSWORD=${DB_PASSWD}
 
   mailpit:
     image: axllent/mailpit
@@ -214,9 +217,6 @@ EOF
 
 # Append human-readable instance info
 echo "${IL_DIR}:${APP_PORT}:${DB_PORT}:${MAILPIT_PORT}" >>"$INSTANCES_FILE"
-
-sudo chown -R 33:www-data ${REPO_DIR}
-sudo chmod -R 775 ${REPO_DIR}
 
 # Pre-populate node_modules (npm clean-install --ignore-scripts) and vendor via one-off container
 echo "Pre-populating node_modules and vendor via one-off container in ${REPO_DIR} ..."
@@ -242,8 +242,19 @@ echo "Pre-populating node_modules and vendor via one-off container in ${REPO_DIR
 	exit 1
 }
 
+sudo chown -R 33:33 "${REPO_DIR}"
+
+# Set ACLs to allow user to edit files created by www-data in the repo directory (if setfacl is available)
+if command -v setfacl >/dev/null 2>&1; then
+  sudo setfacl -R -m u:"$USER":rwX "$REPO_DIR"
+  sudo setfacl -d -m u:"$USER":rwX "$REPO_DIR"
+fi
+
 echo "Starting Docker Compose (detached, with AUTO_SETUP) in $PROJECT_DIR ..."
 cd "$PROJECT_DIR"
+
+# Remove any existing containers/volumes for this project to ensure a clean start (ignore errors if they don't exist)
+sudo docker compose down -v || true
 sudo docker compose up -d
 
 # Determine container ID for the 'ilias' service in this project
@@ -280,10 +291,13 @@ fi
 
 echo "ILIAS should now be available at http://${HOST_IP}:${APP_PORT}"
 
+# Resolve script directory (where resources/ lives), independent of current working directory
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+
 echo "Copying phpcs and phpstan configs to $IL_DIR ..."
-cp ./resources/phpcs.xml "$IL_DIR/phpcs.xml"
-cp ./resources/phpstan.neon "$IL_DIR/phpstan.neon"
-cp ./resources/constants.php "$IL_DIR/constants.php"
+cp "$SCRIPT_ROOT/resources/phpcs.xml" "$IL_DIR/phpcs.xml"
+cp "$SCRIPT_ROOT/resources/phpstan.neon" "$IL_DIR/phpstan.neon"
+cp "$SCRIPT_ROOT/resources/constants.php" "$IL_DIR/constants.php"
 echo "done."
 
 echo "Setup direnv for $IL_DIR ..."
