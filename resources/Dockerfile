@@ -7,10 +7,12 @@ ARG TARGETARCH
 ENV ILIAS_DEVMODE=1
 ARG NODE_VERSION
 
-
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN set -e \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends \
         cron \
         curl \
+        ca-certificates \
         ghostscript \
         imagemagick \
         libmagickwand-dev \
@@ -29,7 +31,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         zip \
         xfonts-75dpi \
         xfonts-base \
-        default-jre \
+        default-jdk \
+        maven \
     && rm -rf /var/lib/apt/* /var/cache/apt/*
 
 RUN sed -i '/disable ghostscript format types/,+6d' /etc/ImageMagick-7/policy.xml

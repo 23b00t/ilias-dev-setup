@@ -244,6 +244,30 @@ if [ "${ILIAS_AUTO_SETUP}" -eq "1" ]; then
 			# Overwrite generated ini files
 			dump_ini_files
 
+			cd /var/www/html/components/ILIAS/WebServices/RPC/lib || exit
+			mvn -Dmaven.compiler.release=11 clean install
+			mv /var/www/html/components/ILIAS/WebServices/RPC/lib/target/ilServer.jar /var/www/html/components/ILIAS/WebServices/RPC/lib/ilServer.jar
+
+			touch /var/www/html/components/ILIAS/WebServices/RPC/lib/ilServer.properties &&
+				printf "[Server]
+        IpAddress = 127.0.0.1
+        Port = 11111
+        IndexPath = /var/iliasdata/default/
+        LogFile = /var/iliasdata/logs/lucene.log
+        LogLevel = WARN
+        NumThreads = 4
+        RamBufferSize = 256
+        IndexMaxFileSizeMB = 500
+        maxClauseCount = 10000
+          
+        [Client1]  
+        ClientId = default  
+        NicId = 0  
+        IliasIniPath = /var/www/html/ilias.ini.php
+        " >/var/www/html/components/ILIAS/WebServices/RPC/lib/ilServer.properties
+
+			cd /var/www/html
+
 			echo "======================================================="
 			echo "ILIAS installed successfully!"
 			echo "Log in using the following credentials:"
@@ -252,19 +276,20 @@ if [ "${ILIAS_AUTO_SETUP}" -eq "1" ]; then
 			echo "Password:       ${ILIAS_ROOT_PASSWORD}"
 			echo "======================================================="
 		else
-			echo "ILIAS already installed"
-
-			if [ "${ILIAS_AUTO_UPDATE}" -eq "1" ]; then
-				echo "Update requested, running setup"
-				su www-data -s /bin/sh -c "php cli/setup.php update -y ${ILIAS_UPDATE_ARGUMENTS}"
-			fi
+			echo "======================================================="
+			echo "ILIAS already installed!"
+			echo "Log in using the following credentials:"
+			echo
+			echo "User:           root"
+			echo "Password:       ${ILIAS_ROOT_PASSWORD}"
+			echo "======================================================="
 		fi
 	fi
 else
 	echo "ILIAS setup skipped"
 fi
 
-# start lucene server only after a successful install (jar may not exist before setup)
+# start lucene server only after a successful install
 if [ -f "/var/www/html/components/ILIAS/WebServices/RPC/lib/ilServer.jar" ]; then
 	java -jar /var/www/html/components/ILIAS/WebServices/RPC/lib/ilServer.jar /var/www/html/components/ILIAS/WebServices/RPC/lib/ilServer.properties start &
 	echo "lucene_started"
@@ -273,4 +298,3 @@ else
 fi
 
 exec "$@"
-

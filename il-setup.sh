@@ -58,7 +58,7 @@ get_node_version() {
 	local ver="$1"
 	case "$ver" in
 	10) echo "20.10.0" ;;
-	11) echo "20.10.0" ;;
+	11) echo "22.18.0" ;;
 	12) echo "22.18.0" ;;
 	*)
 		echo "Unsupported ILIAS version '$ver'" >&2
@@ -102,6 +102,8 @@ echo "Using ports: HTTP ${APP_PORT}, DB ${DB_PORT}, Mailpit ${MAILPIT_PORT}"
 
 # Prepare data directory
 mkdir -p "$ILIASDATA_DIR/ilias"
+mkdir -p "$ILIASDATA_DIR/default"
+mkdir -p "$ILIASDATA_DIR/logs"
 sudo chown -R 33:33 "$ILIASDATA_DIR"
 
 # Prepare project directory
