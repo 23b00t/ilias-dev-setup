@@ -179,6 +179,53 @@ INSTALL_JSON="
 }
 "
 
+setup_lucene() {
+	LUCENE_LIB_DIR="${ILIAS_WWW_PATH}/components/ILIAS/WebServices/RPC/lib"
+
+	# Wenn die Lib nicht existiert (z.B. andere Branches), einfach überspringen
+	if [ ! -d "${LUCENE_LIB_DIR}" ]; then
+		echo "Lucene lib directory not found, skipping Lucene setup"
+		return 0
+	fi
+
+	# /var/iliasdata aus /var/iliasdata/ilias ableiten
+	LUCENE_BASE_DIR="$(dirname "${ILIAS_ILIASDATA_PATH}")"
+	LUCENE_INDEX_PATH="${LUCENE_BASE_DIR}/default"
+	LUCENE_LOG_DIR="${LUCENE_BASE_DIR}/logs"
+	LUCENE_M2_DIR="${LUCENE_BASE_DIR}/.m2"
+
+	# Verzeichnisse im Volume anlegen
+	mkdir -p "${LUCENE_INDEX_PATH}" "${LUCENE_LOG_DIR}" "${LUCENE_M2_DIR}"
+	chown www-data:www-data "${LUCENE_INDEX_PATH}" "${LUCENE_LOG_DIR}" "${LUCENE_M2_DIR}"
+
+	cd "${LUCENE_LIB_DIR}" || exit 1
+
+	echo "Building Lucene ilServer.jar ..."
+	su www-data -s /bin/sh -c "mvn -Dmaven.repo.local=${LUCENE_M2_DIR} -Dmaven.compiler.release=11 clean install"
+	mv "${LUCENE_LIB_DIR}/target/ilServer.jar" "${LUCENE_LIB_DIR}/ilServer.jar"
+	chown www-data:www-data "${LUCENE_LIB_DIR}/ilServer.jar"
+
+	cat >"${LUCENE_LIB_DIR}/ilServer.properties" <<EOF
+[Server]
+IpAddress = 127.0.0.1
+Port = 11111
+IndexPath = ${LUCENE_INDEX_PATH}/
+LogFile = ${LUCENE_LOG_DIR}/lucene.log
+LogLevel = WARN
+NumThreads = 4
+RamBufferSize = 256
+IndexMaxFileSizeMB = 500
+maxClauseCount = 10000
+
+[Client1]
+ClientId = ${ILIAS_CLIENT_NAME}
+NicId = 0
+IliasIniPath = ${ILIAS_WWW_PATH}/ilias.ini.php
+EOF
+
+	chown www-data:www-data "${LUCENE_LIB_DIR}/ilServer.properties"
+}
+
 mkdir -p "${ILIAS_ERRORS_PATH}" "${ILIAS_ILIASDATA_PATH}"
 
 echo "${PHP_INI}" >${PHP_INI_DIR}/conf.d/ilias.ini
@@ -222,7 +269,6 @@ if [ "${ILIAS_AUTO_SETUP}" -eq "1" ]; then
 		echo "Database connection established"
 
 		if ! ${mysql} -e "SELECT COUNT(*) FROM settings" &>/dev/null; then
-
 			# Run setup
 			echo "Running setup"
 			su www-data -s /bin/sh -c "php cli/setup.php install -y \
@@ -231,7 +277,7 @@ if [ "${ILIAS_AUTO_SETUP}" -eq "1" ]; then
 			# Customize ilias
 			echo "Setting root password"
 			${mysql} -e "UPDATE usr_data SET
-                    passwd = '${ILIAS_ROOT_PASSWORD}',
+      passwd = MD5('${ILIAS_ROOT_PASSWORD}'),
                     passwd_enc_type = 'md5'
                 WHERE usr_id = 6"
 
@@ -244,36 +290,8 @@ if [ "${ILIAS_AUTO_SETUP}" -eq "1" ]; then
 			# Overwrite generated ini files
 			dump_ini_files
 
-			cd /var/www/html/components/ILIAS/WebServices/RPC/lib || exit
-			mvn -Dmaven.compiler.release=11 clean install
-			mv /var/www/html/components/ILIAS/WebServices/RPC/lib/target/ilServer.jar /var/www/html/components/ILIAS/WebServices/RPC/lib/ilServer.jar
-
-			touch /var/www/html/components/ILIAS/WebServices/RPC/lib/ilServer.properties &&
-				printf "[Server]
-        IpAddress = 127.0.0.1
-        Port = 11111
-        IndexPath = /var/iliasdata/default/
-        LogFile = /var/iliasdata/logs/lucene.log
-        LogLevel = WARN
-        NumThreads = 4
-        RamBufferSize = 256
-        IndexMaxFileSizeMB = 500
-        maxClauseCount = 10000
-          
-        [Client1]  
-        ClientId = default  
-        NicId = 0  
-        IliasIniPath = /var/www/html/ilias.ini.php
-        " >/var/www/html/components/ILIAS/WebServices/RPC/lib/ilServer.properties
-
-			cd /var/www/html
-
 			echo "======================================================="
 			echo "ILIAS installed successfully!"
-			echo "Log in using the following credentials:"
-			echo
-			echo "User:           root"
-			echo "Password:       ${ILIAS_ROOT_PASSWORD}"
 			echo "======================================================="
 		else
 			echo "======================================================="
@@ -289,12 +307,23 @@ else
 	echo "ILIAS setup skipped"
 fi
 
-# start lucene server only after a successful install
-if [ -f "/var/www/html/components/ILIAS/WebServices/RPC/lib/ilServer.jar" ]; then
-	java -jar /var/www/html/components/ILIAS/WebServices/RPC/lib/ilServer.jar /var/www/html/components/ILIAS/WebServices/RPC/lib/ilServer.properties start &
-	echo "lucene_started"
-else
-	echo "lucene_skipped (ilServer.jar not found)"
+# Lucene-Setup und Start only in webserver context, not by CLI-Tools like setup or update
+if [[ "$1" == apache2* ]] || [ "$1" = "php-fpm" ]; then
+	# Setup lucene server if not already set up
+	if [ ! -f "${ILIAS_WWW_PATH}/components/ILIAS/WebServices/RPC/lib/ilServer.jar" ]; then
+		setup_lucene
+		echo "ILIAS_DEV_SETUP_DONE"
+	fi
+
+	# start lucene server only after a successful install
+	if [ -f "${ILIAS_WWW_PATH}/components/ILIAS/WebServices/RPC/lib/ilServer.jar" ]; then
+		su www-data -s /bin/sh -c "java -jar \
+			${ILIAS_WWW_PATH}/components/ILIAS/WebServices/RPC/lib/ilServer.jar \
+			${ILIAS_WWW_PATH}/components/ILIAS/WebServices/RPC/lib/ilServer.properties start" &
+		echo "lucene_started"
+	else
+		echo "lucene_skipped (ilServer.jar not found)"
+	fi
 fi
 
 exec "$@"

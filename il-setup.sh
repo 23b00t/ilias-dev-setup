@@ -10,7 +10,7 @@ fi
 
 ILIAS_VERSION="$1"
 
-SCRIPT_ROOT="$(pwd)"
+SCRIPT_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 BASE_DIR="$HOME/code"
 INSTANCES_FILE="$BASE_DIR/ilias-instances"
 # If $2 is provided, use it as directory name suffix, otherwise default to version-based naming
@@ -102,8 +102,6 @@ echo "Using ports: HTTP ${APP_PORT}, DB ${DB_PORT}, Mailpit ${MAILPIT_PORT}"
 
 # Prepare data directory
 mkdir -p "$ILIASDATA_DIR/ilias"
-mkdir -p "$ILIASDATA_DIR/default"
-mkdir -p "$ILIASDATA_DIR/logs"
 sudo chown -R 33:33 "$ILIASDATA_DIR"
 
 # Prepare project directory
@@ -255,6 +253,10 @@ fi
 echo "Starting Docker Compose (detached, with AUTO_SETUP) in $PROJECT_DIR ..."
 cd "$PROJECT_DIR"
 
+# Add components/ILIAS/WebServices/RPC/lib/* to .git/info/exclude
+echo "Adding components/ILIAS/WebServices/RPC/lib/* to .git/info/exclude ..."
+echo "components/ILIAS/WebServices/RPC/lib/*" >> "$REPO_DIR/.git/info/exclude"
+
 # Remove any existing containers/volumes for this project to ensure a clean start (ignore errors if they don't exist)
 sudo docker compose down -v || true
 sudo docker compose up -d
@@ -268,14 +270,14 @@ fi
 echo "ILIAS container ID: $ILIASCID"
 
 # Wait for ILIAS auto-setup to complete by watching logs
-echo "Waiting for 'ILIAS installed successfully!' in ilias logs ..."
+echo "Waiting for 'ILIAS_DEV_SETUP_DONE!' in ilias logs ..."
 MAX_WAIT_SECONDS=600
 SLEEP_INTERVAL=10
 ELAPSED=0
 FOUND=0
 
 while [ "$ELAPSED" -lt "$MAX_WAIT_SECONDS" ]; do
-	if sudo docker compose logs ilias 2>&1 | grep -q "ILIAS installed successfully!"; then
+	if sudo docker compose logs ilias 2>&1 | grep -q "ILIAS_DEV_SETUP_DONE"; then
 		FOUND=1
 		break
 	fi
@@ -292,9 +294,6 @@ else
 fi
 
 echo "ILIAS should now be available at http://${HOST_IP}:${APP_PORT}"
-
-# Resolve script directory (where resources/ lives), independent of current working directory
-SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 
 echo "Copying phpcs and phpstan configs to $IL_DIR ..."
 cp "$SCRIPT_ROOT/resources/phpcs.xml" "$IL_DIR/phpcs.xml"
